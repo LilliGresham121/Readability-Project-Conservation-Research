@@ -1,0 +1,116 @@
+# Required Libraries
+library(pdftools)
+library(quanteda)
+library(stringr)
+library(openxlsx)
+
+# Function to count syllables in a word
+count_syllables <- function(word) {
+  syllables <- str_count(word, "[aeiouyAEIOUY]+")
+  return(syllables)
+}
+
+# Function to calculate FRE score
+calculate_fre <- function(text) {
+  sentences <- tokens(text, what = "sentence")
+  words <- tokens(text, what = "word")
+  total_sentences <- length(sentences[[1]])
+  total_words <- length(words[[1]])
+  total_syllables <- sum(unlist(lapply(words[[1]], count_syllables)))
+  
+  fre_score <- 206.835 - (1.015 * (total_words / total_sentences)) - (84.6 * (total_syllables / total_words))
+  return(fre_score)
+}
+
+# Function to calculate FKG score
+calculate_fkg <- function(text) {
+  sentences <- tokens(text, what = "sentence")
+  words <- tokens(text, what = "word")
+  total_sentences <- length(sentences[[1]])
+  total_words <- length(words[[1]])
+  total_syllables <- sum(unlist(lapply(words[[1]], count_syllables)))
+  
+  fkg_score <- 0.39 * (total_words / total_sentences) + 11.8 * (total_syllables / total_words) - 15.59
+  return(fkg_score)
+}
+
+# Function to calculate NDC score using the 3000 common words list
+calculate_ndc <- function(text, easy_words) {
+  # Tokenize words
+  words <- tokens(text, what = "word")
+  total_words <- length(words[[1]])
+  
+  # Count "easy" words in the easy_words list
+  ndc_easy_words <- sum(tolower(words[[1]]) %in% easy_words)
+  
+  # Calculate the percentage of difficult words
+  difficult_words_percentage <- 100 * (total_words - ndc_easy_words) / total_words
+  
+  # Calculate NDC score
+  ndc_score <- 0.1579 * difficult_words_percentage + 0.0496 * (total_words / length(tokens(text, what = "sentence")[[1]]))
+  
+  return(ndc_score)
+}
+
+# Function to process a single PDF file
+process_pdf <- function(pdf_path, easy_words) {
+  cat("Extracting text from PDF:", pdf_path, "\n")
+  pdf_text <- pdf_text(pdf_path)
+  
+  cat("Combining text from all pages\n")
+  full_text <- paste(pdf_text, collapse = " ")
+  
+  cat("Calculating readability scores\n")
+  fre_score <- calculate_fre(full_text)
+  fkg_score <- calculate_fkg(full_text)
+  ndc_score <- calculate_ndc(full_text, easy_words)
+  
+  return(list(file = basename(pdf_path), 
+              fre_score = fre_score,
+              fkg_score = fkg_score,
+              ndc_score = ndc_score))
+}
+
+# Path to the directory containing PDF files
+pdf_directory <- "./Bibliography/EC"  # Update this with the actual path to your directory
+
+# Read the list of 3000 common words for NDC score calculation
+easy_words <- tolower(readLines("dale_chall_3000.txt")) 
+
+# List all PDF files in the directory
+pdf_files <- list.files(pdf_directory, pattern = "\\.pdf$", full.names = TRUE)
+
+# Initialize an empty list to store results
+readability_scores <- list()
+
+# Process each PDF file and store the results
+for (pdf_file in pdf_files) {
+  cat("Processing:", pdf_file, "\n")
+  score <- tryCatch({
+    process_pdf(pdf_file, easy_words)
+  }, error = function(e) {
+    cat("Error processing file:", pdf_file, "\n", e, "\n")
+    return(NULL)
+  })
+  if (!is.null(score)) {
+    readability_scores <- c(readability_scores, list(score))
+    cat("Scores for", pdf_file, "added to the list\n")
+  } else {
+    cat("No scores for", pdf_file, "\n")
+  }
+}
+
+# Check if readability_scores is empty
+if (length(readability_scores) == 0) {
+  cat("No valid readability scores found.\n")
+} else {
+  # Convert readability_scores list to data frame
+  df <- do.call(rbind, lapply(readability_scores, function(x) as.data.frame(x, stringsAsFactors = FALSE)))
+  
+  # Write data frame to Excel file
+  excel_file <- "ec74.xlsx"
+  cat("Writing results to Excel file:", excel_file, "\n")
+  write.xlsx(df, file = excel_file, rowNames = FALSE)
+  
+  cat("Readability scores have been written to", excel_file, "\n")
+}
